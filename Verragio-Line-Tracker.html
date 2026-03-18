@@ -392,14 +392,15 @@ function toggleLock() {
 }
 
 // ========== STATE ==========
-let lines = JSON.parse(localStorage.getItem('tracker_lines') || '[]');
-let events = JSON.parse(localStorage.getItem('tracker_events') || '[]');
-let activityLog = JSON.parse(localStorage.getItem('tracker_log') || '[]');
+var _ls=(function(){try{var t='_t';localStorage.setItem(t,t);localStorage.removeItem(t);return localStorage;}catch(e){var m={};return{getItem:function(k){return m[k]||null;},setItem:function(k,v){m[k]=v;},removeItem:function(k){delete m[k];}};}}());
+let lines = JSON.parse(_ls.getItem('tracker_lines') || '[]');
+let events = JSON.parse(_ls.getItem('tracker_events') || '[]');
+let activityLog = JSON.parse(_ls.getItem('tracker_log') || '[]');
 
 function save() {
-  localStorage.setItem('tracker_lines', JSON.stringify(lines));
-  localStorage.setItem('tracker_events', JSON.stringify(events));
-  localStorage.setItem('tracker_log', JSON.stringify(activityLog));
+  _ls.setItem('tracker_lines', JSON.stringify(lines));
+  _ls.setItem('tracker_events', JSON.stringify(events));
+  _ls.setItem('tracker_log', JSON.stringify(activityLog));
 }
 
 function logActivity(msg) {
@@ -408,6 +409,44 @@ function logActivity(msg) {
   if (activityLog.length > 100) activityLog = activityLog.slice(0, 100);
   save();
   renderLog();
+}
+
+
+// ========== EFFECTIVE STATUS ==========
+function getEffectiveStatus(line) {
+  var today = new Date(); today.setHours(0,0,0,0);
+  var upcoming = null;
+  for (var i = 0; i < events.length; i++) {
+    var ev = events[i];
+    if (!ev.lines || !ev.lines.trim() || !ev.start) continue;
+    var names = ev.lines.split(',').map(function(l){return l.trim();});
+    if (names.indexOf(line.name) < 0) continue;
+    var s = new Date(ev.start+'T00:00:00');
+    var e = ev.end ? new Date(ev.end+'T00:00:00') : s;
+    if (today >= s && today <= e) return {state:'active', evName:ev.name};
+    if (s > today && (!upcoming || s < upcoming.s)) upcoming = {s:s, evName:ev.name};
+  }
+  if (upcoming) return {state:'upcoming', evName:upcoming.evName};
+  return {state:'manual'};
+}
+function effectiveBadge(line) {
+  var eff = getEffectiveStatus(line);
+  if (eff.state==='active')
+    return '<span class="badge badge-show">At Show</span> <span style="font-size:0.68rem;color:#1565c0;font-family:DM Mono,monospace;">@ '+eff.evName+'</span>';
+  if (eff.state==='upcoming')
+    return '<span class="badge" style="background:#e8f0fe;color:#3c5a9a;border:1px dashed #3c5a9a;">Upcoming</span> <span style="font-size:0.68rem;color:#3c5a9a;font-family:DM Mono,monospace;font-style:italic;">@ '+eff.evName+'</span>';
+  return statusBadge(line.status);
+}
+function effectiveLoc(line) {
+  var eff = getEffectiveStatus(line);
+  if (eff.state==='active')   return '📍 '+eff.evName;
+  if (eff.state==='upcoming') return '🗓 '+eff.evName+' (upcoming)';
+  return line.location || '—';
+}
+function effectiveStatStatus(line) {
+  var eff = getEffectiveStatus(line);
+  if (eff.state==='active') return 'show';
+  return line.status;
 }
 
 // ========== TABS ==========
@@ -520,15 +559,15 @@ function deleteLine(id) {
 function renderDashboard() {
   const body = document.getElementById('dashboard-table-body');
   document.getElementById('stat-total').textContent = lines.length;
-  document.getElementById('stat-office').textContent = lines.filter(l => l.status === 'office').length;
-  document.getElementById('stat-out').textContent = lines.filter(l => ['show','transit','client'].includes(l.status)).length;
+  document.getElementById('stat-office').textContent = lines.filter(l => effectiveStatStatus(l) === 'office').length;
+  document.getElementById('stat-out').textContent = lines.filter(l => ['show','transit','client'].includes(effectiveStatStatus(l))).length;
   document.getElementById('stat-alert').textContent = lines.filter(l => l.status === 'missing').length;
   if (!lines.length) { body.innerHTML = '<tr><td colspan="7" class="no-results">No lines added yet. Click "+ Add Line" to get started.</td></tr>'; return; }
   body.innerHTML = lines.map(l => `
     <tr>
       <td><span class="line-name">${l.name}</span></td>
-      <td>${statusBadge(l.status)}</td>
-      <td>${l.location || '—'}</td>
+      <td>${effectiveBadge(l)}</td>
+      <td>${effectiveLoc(l)}</td>
       <td>${l.nextEvent || '—'}</td>
       <td>${l.returnDate ? formatDate(l.returnDate) : '—'}</td>
       <td style="font-size:0.8rem;color:var(--ink-mid);max-width:180px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">${l.notes || '—'}</td>
@@ -547,8 +586,8 @@ function renderLines() {
   body.innerHTML = filtered.map(l => `
     <tr>
       <td><span class="line-name">${l.name}</span></td>
-      <td>${statusBadge(l.status)}</td>
-      <td>${l.location || '—'}</td>
+      <td>${effectiveBadge(l)}</td>
+      <td>${effectiveLoc(l)}</td>
       <td>${l.assigned || '—'}</td>
       <td>${l.returnDate ? formatDate(l.returnDate) : '—'}</td>
       <td style="font-size:0.82rem">${priorityDot(l.priority||'low')}</td>
@@ -714,7 +753,7 @@ function renderEvents() {
     grid.innerHTML = '<div class="no-results" style="grid-column:1/-1;background:#F7F7F7;padding:40px;border-radius:8px;border:1px solid var(--paper-dark)">No events yet. Click "+ Add Event" to track upcoming shows.</div>';
     return;
   }
-  const savedOrder = JSON.parse(localStorage.getItem('tracker_events_order') || '[]');
+  const savedOrder = JSON.parse(_ls.getItem('tracker_events_order') || '[]');
   let ordered;
   if (savedOrder.length) {
     const orderedIds = savedOrder.filter(id => events.find(e => e.id === id));
@@ -766,7 +805,7 @@ function initDragAndDrop() {
 }
 function saveEventOrder() {
   const cards = document.querySelectorAll('#events-grid .event-card[draggable]');
-  localStorage.setItem('tracker_events_order', JSON.stringify([...cards].map(c => parseInt(c.dataset.id))));
+  _ls.setItem('tracker_events_order', JSON.stringify([...cards].map(c => parseInt(c.dataset.id))));
 }
 
 // ========== LOG ==========
@@ -789,7 +828,7 @@ function formatDate(d) {
 }
 
 // ========== INIT ==========
-try { localStorage.removeItem('tracker_lines'); localStorage.removeItem('tracker_events'); localStorage.removeItem('tracker_log'); localStorage.removeItem('tracker_events_order'); } catch(e) {}
+
 renderDashboard();
 renderLines();
 renderEvents();
